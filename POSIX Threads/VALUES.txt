@@ -1,0 +1,6 @@
+Ants_Number = 100
+Food_Placement_Time = 5
+Food_Scent_Radius = 50
+Ant_Scent_Radius = 120
+Ant_Eating_Ratio = 10
+Episode_Time = 1
