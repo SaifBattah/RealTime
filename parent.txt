@@ -1,0 +1,213 @@
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <string.h>
+#include "shared.h"
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+
+const char* MY_STRING;
+int counter = 0;
+double sleep_time = 0.25;
+
+void handle_sigusrp(int sig){
+    printf("Parent process with PID %d has received signal SIGUSR1.\n", getpid());
+    counter++;
+    sleep(1);
+}
+
+
+int main() {
+
+    float team1,team2;
+    key_t key = ftok("shared_memory_key", 1234);  // Generate a unique key
+    int shmid = shmget(key, sizeof(struct shared_data), IPC_CREAT | 0666);  // Create shared memory segment
+    struct shared_data *shared_memory = (struct shared_data *)shmat(shmid, NULL, 0);  // Attach shared memory segment
+    float value[4];
+    char combined_values[50];
+    FILE* file[4];
+    char n[4][10];
+    int pid, status;
+    pid_t child_pid[5];
+    FILE *fp;
+    int min, max;
+    char pid_str[5][10]; // Maximum 10 digits for the process ID
+    int f_des[2];
+    static char message[BUFSIZ];
+
+    for (int i = 0; i < 5; i++) {
+        sleep(1);
+        pid = fork();
+        if (pid == -1) {
+            printf("Error: fork() failed.\n");
+            exit(1);
+        }
+        else if (pid == 0 && i != 4) {
+            printf("Child process %d with PID %d\n", i+1, getpid());
+            sprintf(pid_str[i], "%d", pid); // from pid_t to string
+            execl("./child", "child", pid_str[i], NULL); //execute child.c with the given parameters
+	        //waitpid(child_pid[i], &status, 0);
+	        //exit(0);
+        }
+        else {
+            child_pid[i] = pid;
+        }
+        sleep(sleep_time);
+        sleep_time += .0125;
+    }
+
+    if(child_pid[4] == 0){
+        printf("Child process 5 with PID %d Created Successfully!\n", getpid());
+        sprintf(pid_str[4], "%d", child_pid[4]);
+        printf("R%s", pid_str[4]);
+        execl("./coPro", "coPro", pid_str[4], NULL); //execute coPro.c with the given parameters
+        }
+
+//-----------------------End of Child Generation-------------------------
+    srand(time(NULL));
+    sleep(1);
+    // Generate random numbers for min and max
+    min = rand() % 101;
+    max = min + rand() % (101 - min); // to ensure max is greater than min
+
+    // Open the file for writing
+    fp = fopen("range.txt", "w");
+
+    // Check if file is opened successfully
+    if (fp == NULL) {
+        printf("Error: Cannot create file.\n");
+        exit(1);
+    }
+
+    // Write the min and max values to the file
+    fprintf(fp, "%d-%d", min, max);
+    // forloop for all child to run them all/. using kill(pid, SIGUSR1)
+    // Close the file
+    fclose(fp);
+
+    printf("\nrange.txt Has Created, With data: %d - %d \n\n", min, max);
+    sleep(1);
+
+    for (int p = 0 ; p < 4 ; p++){
+        kill(child_pid[p], SIGUSR1);
+        sleep(1);
+    }
+//-----------------------End of file Generation---------------------------
+
+    struct sigaction sap;
+    sap.sa_handler = &handle_sigusrp;
+    sap.sa_flags = SA_RESTART;
+    sigaction(SIGUSR1, &sap, NULL);
+sleep(1);
+    while(counter < 4){
+        sleep(1);
+    }
+
+    if(counter == 4){
+        printf("\n4 signlas has already recieved!\n");
+        printf("\nProcess is reading values from the child files ....\n");
+       
+        for(int i = 0 ; i < 4 ; i++){
+            sprintf(n[i], "%d.txt", child_pid[i]);
+            file[i] = fopen(n[i], "r");
+
+            if (file[i] == NULL){
+                printf("Error: Cannot open child files.\n");
+                exit(1);
+                }
+
+            fscanf(file[i], "%f", &value[i]);
+            fclose(file[i]);
+            }
+
+            // Print the values
+            printf("Child 1 generated value: %.3f\n", value[0]);
+            printf("Child 2 generated value: %.3f\n", value[1]);
+            printf("Child 3 generated value: %.3f\n", value[2]);
+            printf("Child 4 generated value: %.3f\n", value[3]);
+sleep(1);
+            sprintf(combined_values, "%.3f-%.3f-%.3f-%.3f", value[0], value[1], value[2], value[3]);
+            printf("\n%s -> will pe passed to Child # 5\n", combined_values);
+
+            printf("\nPipe Creation...\n");
+            if (pipe(f_des) == -1) {
+                perror("Pipe");
+                exit(2);
+                }
+sleep(1);
+            switch(fork()){
+                case -1:
+                    perror("Fork");
+                    exit(3);
+
+                case 0:			/* In the child */
+                    close(f_des[1]);
+                    if ( read(f_des[0], message, BUFSIZ) != -1 ) {                       
+
+                        // Write the string value to shared memory
+                        strcpy(shared_memory->value, combined_values);
+                        printf("Received value from parent in parent.c: %s\n", shared_memory->value);
+                        // Notify the child process
+                        kill(child_pid[4], SIGUSR1);
+                        // ...
+
+                        //shmdt(shared_memory);  // Detach shared memory segment
+                        //shmctl(shmid, IPC_RMID, NULL);  // Delete shared memory segment
+                        
+                        //fflush(stdout);
+                        }
+                    else {
+                        perror("Read");
+                        exit(4);
+                        }
+                    break;
+    
+                default:			/* In the parent */
+                    
+                    sleep(1);
+                    
+                    if ( write(f_des[1], combined_values, strlen(combined_values)) != -1 ) {
+                        close(f_des[1]); //close the write end
+                        printf("Message sent by parent to the Co-Processor in parent.c: [%s]\n", combined_values);
+                        sleep(2);
+                        //fflush(stdout);
+                        }
+                    else {
+                        perror("Write");
+                        exit(5);
+                    }
+                    
+                    }
+                    }
+            
+            if(counter == 5){
+                printf("Parent Received value from co-Processor: %s\n", shared_memory->value);
+                sscanf(shared_memory->value, "%f-%f",&team1,&team2);
+                
+                if(team1 > team2){
+                    printf("Team1 Win! with score: %.3lf\n\n", team1);
+                }
+                else{
+                    printf("Team2 Win! with score: %.3lf\n\n", team2);
+                }
+
+                for(int k = 0 ; k < 4 ; k++){
+                    char str[15];
+                    sprintf(str, "%d.txt", child_pid[k]);
+                    remove(str);
+                }
+                remove("range.txt");
+
+                for (int r = 0; r < 5 ; r++) {
+                    kill(child_pid[r], SIGKILL);
+                }
+            }
+
+
+            return 0;
+}
+
+
