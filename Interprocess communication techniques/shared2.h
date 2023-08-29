@@ -1,0 +1,1 @@
+char list_of_char[1000] = "";
